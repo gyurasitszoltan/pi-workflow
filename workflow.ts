@@ -16,7 +16,7 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -356,48 +356,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Current task widget
-		const current = tasks.find((t) => t.status === "inprogress");
-		if (!current) {
-			ctx.ui.setWidget("workflow-current", undefined);
-		} else {
-			ctx.ui.setWidget(
-				"workflow-current",
-				(_tui, theme) => {
-					return {
-						render(width: number): string[] {
-							const cur = tasks.find((t) => t.status === "inprogress");
-							if (!cur) return [];
-
-							const elapsed = formatElapsedLive(cur);
-							const toolEntries = Object.entries(cur.usage.toolCalls);
-							const toolStr = toolEntries.length > 0 ? toolEntries.map(([n, c]) => `${n}=${c}`).join(" ") : "";
-							const usageStr =
-								cur.usage.inputTokens > 0 || cur.usage.outputTokens > 0
-									? ` · in: ${fmtTok(cur.usage.inputTokens)} out: ${fmtTok(cur.usage.outputTokens)}`
-									: "";
-
-							const sepLine = theme.fg("borderMuted", "─".repeat(width));
-							const titleLine = truncateToWidth(
-								`${theme.fg("dim", (listTitle || "Workflow") + " /")} ${theme.fg("accent", `#${cur.id}`)} ${theme.fg("success", cur.text)}` +
-									(cur.importance !== "normal" ? theme.fg("dim", ` · ${cur.importance}`) : ""),
-								width,
-								"",
-							);
-							const statsLine = truncateToWidth(
-								`${theme.fg("dim", elapsed)}` +
-									(toolStr ? theme.fg("dim", ` · ${toolStr}`) : "") +
-									theme.fg("dim", usageStr),
-								width,
-								"",
-							);
-							return [sepLine, titleLine, statsLine];
-						},
-						invalidate() {},
-					};
-				},
-				{ placement: "belowEditor" },
-			);
-		}
+		ctx.ui.setWidget("workflow-current", undefined);
 
 		// Footer
 		ctx.ui.setFooter((tui, theme, footerData) => {
@@ -406,23 +365,13 @@ export default function (pi: ExtensionAPI) {
 				dispose: unsub,
 				invalidate() {},
 				render(width: number): string[] {
-					// Token totals from branch
-					let tokIn = 0;
-					let tokOut = 0;
-					for (const entry of ctx.sessionManager.getBranch()) {
-						if (entry.type === "message" && entry.message.role === "assistant") {
-							const m = entry.message as AssistantMessage;
-							tokIn += m.usage.input;
-							tokOut += m.usage.output;
-						}
-					}
-
-					// Line 1: model · context bar · cwd · branch (left) | tokens · tool counts (right)
+					// Line 1: model · context bar · cwd · branch · token totals
 					const usage = ctx.getContextUsage();
 					const ctxPct = usage ? usage.percent : 0;
 					const filled = Math.min(10, Math.max(0, Math.round(ctxPct / 10)));
 					const model = ctx.model?.id || "no-model";
 					const branch = footerData.getGitBranch();
+					const tokenCounter = theme.fg("dim", ` in: ${fmtTok(lastKnownBranchTokens.input)} out: ${fmtTok(lastKnownBranchTokens.output)}`);
 
 					const l1Left =
 						theme.fg("dim", ` ${model} `) +
@@ -435,47 +384,31 @@ export default function (pi: ExtensionAPI) {
 						theme.fg("dim", ` ${ctx.cwd}`) +
 						(branch
 							? theme.fg("dim", " ") + theme.fg("warning", "(") + theme.fg("success", branch) + theme.fg("warning", ")")
-							: "");
-					const tcEntries = Object.entries(toolCounts);
-					const l1Right =
-						theme.fg("dim", "in: ") +
-						theme.fg("success", fmtTok(tokIn)) +
-						theme.fg("dim", " · out: ") +
-						theme.fg("accent", fmtTok(tokOut)) +
-						theme.fg("dim", " · ") +
-						(tcEntries.length === 0
-							? theme.fg("dim", "waiting for tools ")
-							: tcEntries.map(([n, c]) => theme.fg("accent", n) + theme.fg("dim", "=") + theme.fg("success", `${c}`)).join(theme.fg("dim", " ")) +
-								theme.fg("dim", " "));
-					const l1Pad = " ".repeat(Math.max(1, width - visibleWidth(l1Left) - visibleWidth(l1Right)));
-					const line1 = truncateToWidth(l1Left + l1Pad + l1Right, width, "");
+							: "") +
+						tokenCounter;
+					const line1 = truncateToWidth(l1Left, width, "");
 
 					// Workflow header line
 					const tot = tasks.length;
 					if (tot === 0) {
-						const wfLeft =
-							theme.fg("accent", " Workflow") + (listTitle ? theme.fg("dim", `: ${listTitle}`) : "") + theme.fg("dim", " · no tasks");
+						const wfLeft = theme.fg("accent", " Workflow") + theme.fg("dim", ": no tasks");
 						return [line1, truncateToWidth(wfLeft, width, "")];
 					}
 
 					const doneC = tasks.filter((t) => t.status === "done").length;
 					const skippedC = tasks.filter((t) => t.status === "skipped").length;
 					const blockedC = tasks.filter((t) => t.status === "blocked").length;
-					const activeC = tasks.filter((t) => t.status === "inprogress").length;
-					const idleC = tasks.filter((t) => t.status === "idle").length;
 					const closedC = doneC + skippedC;
 					const closedPct = Math.round((closedC / tot) * 100);
 
-					const wfLeft =
-						theme.fg("accent", " Workflow") +
-						(listTitle ? theme.fg("dim", `: ${listTitle}`) : "") +
-						theme.fg("dim", " · ") +
-						theme.fg("accent", `${closedPct}%`) +
-						theme.fg("dim", ` [${progressBar(closedPct)}]`);
-					const wfRight =
-						theme.fg("dim", `closed:${closedC}/${tot} · idle:${idleC} active:${activeC} blocked:${blockedC} skipped:${skippedC} `);
-					const wfPad = " ".repeat(Math.max(1, width - visibleWidth(wfLeft) - visibleWidth(wfRight)));
-					const wfLine = truncateToWidth(wfLeft + wfPad + wfRight, width, "");
+					const wfLine = truncateToWidth(
+						theme.fg("accent", " Workflow:") +
+							theme.fg("dim", " ") +
+							theme.fg("accent", `${closedPct}%`) +
+							theme.fg("dim", ` [${progressBar(closedPct)}] blocked:${blockedC} skipped:${skippedC}`),
+						width,
+						"",
+					);
 
 					// Task detail rows: inprogress first, then blocked, then recent done
 					const inprogressTasks = tasks.filter((t) => t.status === "inprogress");
@@ -531,7 +464,29 @@ export default function (pi: ExtensionAPI) {
 						rows.push(truncateToWidth(theme.fg("dim", `  +${remaining} more`), width, ""));
 					}
 
-					return [line1, wfLine, ...rows];
+					const currentTask = tasks.find((t) => t.status === "inprogress");
+					const currentLines = currentTask
+						? [
+								truncateToWidth(
+									theme.fg("dim", ` ${listTitle || "Workflow"} /`) +
+										theme.fg("dim", " ") +
+										theme.fg("accent", `#${currentTask.id}`) +
+										theme.fg("dim", " ") +
+										theme.fg("success", currentTask.text),
+									width,
+									"",
+								),
+								truncateToWidth(
+									theme.fg("dim", ` time: ${formatElapsedLive(currentTask)}`) +
+										theme.fg("dim", ` · in: ${fmtTok(currentTask.usage.inputTokens)} out: ${fmtTok(currentTask.usage.outputTokens)}`),
+									width,
+									"",
+								),
+								truncateToWidth(theme.fg("borderMuted", ` ${"─".repeat(Math.max(0, width - 1))}`), width, ""),
+							]
+						: [];
+
+					return [line1, ...currentLines, wfLine, ...rows];
 				},
 			};
 		});
@@ -720,7 +675,7 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Agent end: nudge & smart final summary ────────────────────────────────
 
-	pi.on("agent_end", async (_event, _ctx) => {
+	pi.on("agent_end", async (_event, ctx) => {
 		if (!listTitle && tasks.length === 0) return;
 
 		const allClosed = tasks.length > 0 && tasks.every((t) => isClosedStatus(t.status));
@@ -754,7 +709,15 @@ export default function (pi: ExtensionAPI) {
 				...(toolLines ? ["", "Tools used:", toolLines] : []),
 			].join("\n");
 
-			pi.sendMessage({ customType: "workflow-summary", content: summary, display: true }, { triggerTurn: false });
+			const sendSummaryWhenIdle = (attempt = 0): void => {
+				if (ctx.isIdle() || attempt >= 50) {
+					pi.sendMessage({ customType: "workflow-summary", content: summary, display: true }, { triggerTurn: false });
+					return;
+				}
+				setTimeout(() => sendSummaryWhenIdle(attempt + 1), 10);
+			};
+
+			sendSummaryWhenIdle();
 			return;
 		}
 

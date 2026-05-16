@@ -128,6 +128,28 @@ function progressBar(percent: number, width = 10): string {
 	return "█".repeat(filled) + "░".repeat(width - filled);
 }
 
+function countStatuses(tasks: WorkflowTask[]): Record<WorkflowTaskStatus, number> {
+	return tasks.reduce(
+		(counts, task) => {
+			counts[task.status]++;
+			return counts;
+		},
+		{ idle: 0, inprogress: 0, blocked: 0, skipped: 0, done: 0 } as Record<WorkflowTaskStatus, number>,
+	);
+}
+
+function formatWorkflowProgress(tasks: WorkflowTask[]): string {
+	const total = tasks.length;
+	const counts = countStatuses(tasks);
+	const closed = counts.done + counts.skipped;
+	const pct = total > 0 ? Math.round((closed / total) * 100) : 0;
+	const statusCounts = (["done", "inprogress", "idle", "blocked", "skipped"] as const)
+		.filter((status) => counts[status] > 0)
+		.map((status) => `${status}:${counts[status]}`)
+		.join(" ");
+	return `${pct}% [${progressBar(pct)}] ${counts.done}/${total}${statusCounts ? ` ${statusCounts}` : ""}`;
+}
+
 function fmtTok(n: number): string {
 	return n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`;
 }
@@ -211,24 +233,9 @@ class WorkflowListComponent {
 		if (tasks.length === 0) {
 			lines.push(truncateToWidth(`  ${th.fg("dim", "No tasks yet. Use workflow add to add tasks.")}`, width));
 		} else {
-			const done = tasks.filter((t) => t.status === "done").length;
-			const skipped = tasks.filter((t) => t.status === "skipped").length;
-			const blocked = tasks.filter((t) => t.status === "blocked").length;
-			const active = tasks.filter((t) => t.status === "inprogress").length;
-			const idle = tasks.filter((t) => t.status === "idle").length;
-			const total = tasks.length;
-			const closed = done + skipped;
-			const pct = total > 0 ? Math.round((closed / total) * 100) : 0;
-
 			lines.push(
 				truncateToWidth(
-					`  Progress: ${th.fg("accent", `${pct}%`)} ${th.fg("dim", `[${progressBar(pct)}]`)}`,
-					width,
-				),
-			);
-			lines.push(
-				truncateToWidth(
-					`  ${th.fg("success", `Done: ${done}`)} · ${th.fg("accent", `Active: ${active}`)} · ${th.fg("muted", `Idle: ${idle}`)} · ${th.fg("error", `Blocked: ${blocked}`)} · ${th.fg("dim", `Skipped: ${skipped}`)}`,
+					`  Workflow: ${th.fg("accent", formatWorkflowProgress(tasks))}`,
 					width,
 				),
 			);
@@ -344,13 +351,9 @@ export default function (pi: ExtensionAPI) {
 		if (total === 0) {
 			ctx.ui.setStatus(listTitle ? `Workflow: ${listTitle} · no tasks` : "Workflow: no list", "workflow");
 		} else {
-			const closed = tasks.filter((t) => isClosedStatus(t.status)).length;
-			const blocked = tasks.filter((t) => t.status === "blocked").length;
-			const pct = Math.round((closed / total) * 100);
 			const active = tasks.find((t) => t.status === "inprogress");
 			const title = listTitle || "Workflow";
-			let status = `Workflow: ${title} · ${pct}% [${progressBar(pct)}] · ${closed}/${total} closed`;
-			if (blocked > 0) status += ` · blocked: ${blocked}`;
+			let status = `Workflow: ${title} · ${formatWorkflowProgress(tasks)}`;
 			if (active) status += ` · #${active.id} ${active.text}`;
 			ctx.ui.setStatus(status, "workflow");
 		}
@@ -395,17 +398,8 @@ export default function (pi: ExtensionAPI) {
 						return [line1, truncateToWidth(wfLeft, width, "")];
 					}
 
-					const doneC = tasks.filter((t) => t.status === "done").length;
-					const skippedC = tasks.filter((t) => t.status === "skipped").length;
-					const blockedC = tasks.filter((t) => t.status === "blocked").length;
-					const closedC = doneC + skippedC;
-					const closedPct = Math.round((closedC / tot) * 100);
-
 					const wfLine = truncateToWidth(
-						theme.fg("accent", " Workflow:") +
-							theme.fg("dim", " ") +
-							theme.fg("accent", `${closedPct}%`) +
-							theme.fg("dim", ` [${progressBar(closedPct)}] blocked:${blockedC} skipped:${skippedC}`),
+						theme.fg("accent", " Workflow:") + theme.fg("dim", ` ${formatWorkflowProgress(tasks)}`),
 						width,
 						"",
 					);
@@ -464,29 +458,9 @@ export default function (pi: ExtensionAPI) {
 						rows.push(truncateToWidth(theme.fg("dim", `  +${remaining} more`), width, ""));
 					}
 
-					const currentTask = tasks.find((t) => t.status === "inprogress");
-					const currentLines = currentTask
-						? [
-								truncateToWidth(
-									theme.fg("dim", ` ${listTitle || "Workflow"} /`) +
-										theme.fg("dim", " ") +
-										theme.fg("accent", `#${currentTask.id}`) +
-										theme.fg("dim", " ") +
-										theme.fg("success", currentTask.text),
-									width,
-									"",
-								),
-								truncateToWidth(
-									theme.fg("dim", ` time: ${formatElapsedLive(currentTask)}`) +
-										theme.fg("dim", ` · in: ${fmtTok(currentTask.usage.inputTokens)} out: ${fmtTok(currentTask.usage.outputTokens)}`),
-									width,
-									"",
-								),
-								truncateToWidth(theme.fg("borderMuted", ` ${"─".repeat(Math.max(0, width - 1))}`), width, ""),
-							]
-						: [];
+					const separatorLine = truncateToWidth(theme.fg("borderMuted", ` ${"─".repeat(Math.max(0, width - 1))}`), width, "");
 
-					return [line1, ...currentLines, wfLine, ...rows];
+					return [line1, separatorLine, wfLine, ...rows];
 				},
 			};
 		});
@@ -851,10 +825,6 @@ export default function (pi: ExtensionAPI) {
 						};
 					}
 
-					const total = tasks.length;
-					const closed = tasks.filter((t) => isClosedStatus(t.status)).length;
-					const pct = Math.round((closed / total) * 100);
-
 					const taskLines = tasks
 						.map((t) => {
 							const imp = t.importance !== "normal" ? ` [${t.importance}]` : "";
@@ -872,7 +842,7 @@ export default function (pi: ExtensionAPI) {
 
 					refreshUI(ctx);
 					return {
-						content: [{ type: "text" as const, text: `${header}${descLine}\nProgress: ${pct}% [${progressBar(pct)}] · ${closed}/${total} closed\n\n${taskLines}` }],
+						content: [{ type: "text" as const, text: `${header}${descLine}\nWorkflow: ${formatWorkflowProgress(tasks)}\n\n${taskLines}` }],
 						details: makeDetails("list"),
 					};
 				}
@@ -1458,12 +1428,8 @@ export default function (pi: ExtensionAPI) {
 				case "list": {
 					if (taskList.length === 0) return new Text(theme.fg("dim", "No tasks"), 0, 0);
 
-					const total = taskList.length;
-					const closed = taskList.filter((t) => isClosedStatus(t.status)).length;
-					const pct = Math.round((closed / total) * 100);
-
 					let listText = snap.listTitle ? theme.fg("accent", snap.listTitle) + theme.fg("dim", "  ") : "";
-					listText += theme.fg("dim", `${pct}% [${progressBar(pct)}] · ${closed}/${total} closed`);
+					listText += theme.fg("dim", formatWorkflowProgress(taskList));
 
 					const display = expanded ? taskList : taskList.slice(0, 5);
 					for (const t of display) {

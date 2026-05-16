@@ -368,9 +368,6 @@ export default function (pi: ExtensionAPI) {
 							const cur = tasks.find((t) => t.status === "inprogress");
 							if (!cur) return [];
 
-							const tot = tasks.length;
-							const cls = tasks.filter((t) => isClosedStatus(t.status)).length;
-							const pct = tot > 0 ? Math.round((cls / tot) * 100) : 0;
 							const elapsed = formatElapsedLive(cur);
 							const toolEntries = Object.entries(cur.usage.toolCalls);
 							const toolStr = toolEntries.length > 0 ? toolEntries.map(([n, c]) => `${n}=${c}`).join(" ") : "";
@@ -379,29 +376,21 @@ export default function (pi: ExtensionAPI) {
 									? ` · in: ${fmtTok(cur.usage.inputTokens)} out: ${fmtTok(cur.usage.outputTokens)}`
 									: "";
 
-							const inner = Math.max(0, width - 2);
-							const topLabel = " Workflow ";
-							const topLine = `╭─${theme.fg("accent", topLabel)}${"─".repeat(Math.max(0, inner - topLabel.length - 2))}╮`;
-							const mkRow = (content: string) => {
-								const stripped = content.replace(/\x1b\[[0-9;]*m/g, "");
-								const pad = Math.max(0, inner - 2 - stripped.length);
-								return `│ ${content}${" ".repeat(pad)} │`;
-							};
-
-							const rows = [
-								mkRow(`${theme.fg("dim", "List:")} ${theme.fg("muted", listTitle || "–")}`),
-								mkRow(`${theme.fg("dim", "Current:")} ${theme.fg("accent", `#${cur.id}`)} ${theme.fg("success", cur.text)}`),
-								mkRow(`${theme.fg("dim", "Importance:")} ${theme.fg("muted", cur.importance)}`),
-								mkRow(
-									`${theme.fg("dim", `Progress: ${pct}%`)} ${theme.fg("dim", `[${progressBar(pct)}]`)} ${theme.fg("dim", `· ${cls}/${tot}`)}`,
-								),
-								mkRow(
-									`${theme.fg("dim", `Time: ${elapsed}`)}${toolStr ? theme.fg("dim", ` · ${toolStr}`) : ""}${theme.fg("dim", usageStr)}`,
-								),
-							];
-							const botLine = `╰${"─".repeat(inner)}╯`;
-
-							return [topLine, ...rows, botLine].map((l) => truncateToWidth(l, width, ""));
+							const sepLine = theme.fg("borderMuted", "─".repeat(width));
+							const titleLine = truncateToWidth(
+								`${theme.fg("dim", (listTitle || "Workflow") + " /")} ${theme.fg("accent", `#${cur.id}`)} ${theme.fg("success", cur.text)}` +
+									(cur.importance !== "normal" ? theme.fg("dim", ` · ${cur.importance}`) : ""),
+								width,
+								"",
+							);
+							const statsLine = truncateToWidth(
+								`${theme.fg("dim", elapsed)}` +
+									(toolStr ? theme.fg("dim", ` · ${toolStr}`) : "") +
+									theme.fg("dim", usageStr),
+								width,
+								"",
+							);
+							return [sepLine, titleLine, statsLine];
 						},
 						invalidate() {},
 					};
@@ -428,11 +417,12 @@ export default function (pi: ExtensionAPI) {
 						}
 					}
 
-					// Line 1: model · context bar · tokens
+					// Line 1: model · context bar · cwd · branch (left) | tokens · tool counts (right)
 					const usage = ctx.getContextUsage();
 					const ctxPct = usage ? usage.percent : 0;
 					const filled = Math.min(10, Math.max(0, Math.round(ctxPct / 10)));
 					const model = ctx.model?.id || "no-model";
+					const branch = footerData.getGitBranch();
 
 					const l1Left =
 						theme.fg("dim", ` ${model} `) +
@@ -441,38 +431,31 @@ export default function (pi: ExtensionAPI) {
 						theme.fg("dim", "░".repeat(10 - filled)) +
 						theme.fg("warning", "]") +
 						theme.fg("dim", " ") +
-						theme.fg("accent", `${Math.round(ctxPct)}%`);
-					const l1Right =
-						theme.fg("dim", "in: ") +
-						theme.fg("success", fmtTok(tokIn)) +
-						theme.fg("dim", " · out: ") +
-						theme.fg("accent", fmtTok(tokOut)) +
-						theme.fg("dim", " ");
-					const l1Pad = " ".repeat(Math.max(1, width - visibleWidth(l1Left) - visibleWidth(l1Right)));
-					const line1 = truncateToWidth(l1Left + l1Pad + l1Right, width, "");
-
-					// Line 2: cwd (full path) · branch · tool counts
-					const branch = footerData.getGitBranch();
-					const l2Left =
+						theme.fg("accent", `${Math.round(ctxPct)}%`) +
 						theme.fg("dim", ` ${ctx.cwd}`) +
 						(branch
 							? theme.fg("dim", " ") + theme.fg("warning", "(") + theme.fg("success", branch) + theme.fg("warning", ")")
 							: "");
 					const tcEntries = Object.entries(toolCounts);
-					const l2Right =
-						tcEntries.length === 0
+					const l1Right =
+						theme.fg("dim", "in: ") +
+						theme.fg("success", fmtTok(tokIn)) +
+						theme.fg("dim", " · out: ") +
+						theme.fg("accent", fmtTok(tokOut)) +
+						theme.fg("dim", " · ") +
+						(tcEntries.length === 0
 							? theme.fg("dim", "waiting for tools ")
 							: tcEntries.map(([n, c]) => theme.fg("accent", n) + theme.fg("dim", "=") + theme.fg("success", `${c}`)).join(theme.fg("dim", " ")) +
-								theme.fg("dim", " ");
-					const l2Pad = " ".repeat(Math.max(1, width - visibleWidth(l2Left) - visibleWidth(l2Right)));
-					const line2 = truncateToWidth(l2Left + l2Pad + l2Right, width, "");
+								theme.fg("dim", " "));
+					const l1Pad = " ".repeat(Math.max(1, width - visibleWidth(l1Left) - visibleWidth(l1Right)));
+					const line1 = truncateToWidth(l1Left + l1Pad + l1Right, width, "");
 
 					// Workflow header line
 					const tot = tasks.length;
 					if (tot === 0) {
 						const wfLeft =
 							theme.fg("accent", " Workflow") + (listTitle ? theme.fg("dim", `: ${listTitle}`) : "") + theme.fg("dim", " · no tasks");
-						return [line1, line2, truncateToWidth(wfLeft, width, "")];
+						return [line1, truncateToWidth(wfLeft, width, "")];
 					}
 
 					const doneC = tasks.filter((t) => t.status === "done").length;
@@ -533,6 +516,10 @@ export default function (pi: ExtensionAPI) {
 							row += theme.fg("warning", t.text) + theme.fg("error", ` · blocked: ${t.blockedReason || "–"}`);
 						} else if (t.status === "done") {
 							row += theme.fg("dim", t.text);
+							row += theme.fg("dim", ` · ${formatElapsed(t.elapsedMs)}`);
+							if (t.usage.inputTokens > 0 || t.usage.outputTokens > 0) {
+								row += theme.fg("dim", ` · in: ${fmtTok(t.usage.inputTokens)} out: ${fmtTok(t.usage.outputTokens)}`);
+							}
 							if (t.evidence && t.evidence.length > 0) row += theme.fg("dim", ` · evidence: ${t.evidence[0]}`);
 						} else {
 							row += theme.fg("muted", t.text);
@@ -544,7 +531,7 @@ export default function (pi: ExtensionAPI) {
 						rows.push(truncateToWidth(theme.fg("dim", `  +${remaining} more`), width, ""));
 					}
 
-					return [line1, line2, wfLine, ...rows];
+					return [line1, wfLine, ...rows];
 				},
 			};
 		});

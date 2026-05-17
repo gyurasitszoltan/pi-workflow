@@ -658,15 +658,20 @@ export default function (pi: ExtensionAPI) {
 		if (allClosed && finalSummaryEmittedForVersion !== stateVersion) {
 			finalSummaryEmittedForVersion = stateVersion;
 
+			const taskSeparator = "-------------------------------";
 			const taskLines = tasks
 				.map((t) => {
+					const icon = t.status === "done" ? "✓" : "↷";
+					const title = `  ${icon} #${t.id} ${t.text}`;
+					const info = `  time: ${formatElapsed(t.elapsedMs)} in: ${fmtTok(t.usage.inputTokens)} out: ${fmtTok(t.usage.outputTokens)}`;
+					const details: string[] = [];
 					if (t.status === "done") {
-						let line = `  ✓ #${t.id} ${t.text} — ${formatElapsed(t.elapsedMs)}`;
-						if (t.doneNote) line += ` — ${t.doneNote}`;
-						if (t.evidence && t.evidence.length > 0) line += ` — evidence: ${t.evidence.join(", ")}`;
-						return line;
+						if (t.doneNote) details.push(`  note: ${t.doneNote}`);
+						if (t.evidence && t.evidence.length > 0) details.push(`  evidence: ${t.evidence.join(", ")}`);
+					} else {
+						details.push(`  skipped: ${t.skippedReason || "–"}`);
 					}
-					return `  ↷ #${t.id} ${t.text} — skipped: ${t.skippedReason || "–"}`;
+					return [taskSeparator, title, info, ...details].join("\n");
 				})
 				.join("\n");
 
@@ -674,13 +679,21 @@ export default function (pi: ExtensionAPI) {
 				.filter(([name]) => name !== "workflow")
 				.map(([name, count]) => `  - ${name}: ${count}`)
 				.join("\n");
+			const totalElapsedMs = tasks.reduce((sum, task) => sum + task.elapsedMs, 0);
+			const totalInputTokens = tasks.reduce((sum, task) => sum + task.usage.inputTokens, 0);
+			const totalOutputTokens = tasks.reduce((sum, task) => sum + task.usage.outputTokens, 0);
+			const totals = [
+				`Total time: ${formatElapsed(totalElapsedMs)}`,
+				`Total tokens: in: ${fmtTok(totalInputTokens)} out: ${fmtTok(totalOutputTokens)}`,
+			].join("\n");
 
 			const summary = [
 				`✅ Workflow complete: ${listTitle || "–"}`,
 				"",
-				"Tasks:",
 				taskLines,
-				...(toolLines ? ["", "Tools used:", toolLines] : []),
+				...(toolLines ? ["", "Tools used:", toolLines] : ["", "Tools used:", "  - none"]),
+				"",
+				totals,
 			].join("\n");
 
 			const sendSummaryWhenIdle = (attempt = 0): void => {

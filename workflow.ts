@@ -658,7 +658,6 @@ export default function (pi: ExtensionAPI) {
 		if (allClosed && finalSummaryEmittedForVersion !== stateVersion) {
 			finalSummaryEmittedForVersion = stateVersion;
 
-			const taskSeparator = "-------------------------------";
 			const taskLines = tasks
 				.map((t) => {
 					const icon = t.status === "done" ? "✓" : "↷";
@@ -671,9 +670,9 @@ export default function (pi: ExtensionAPI) {
 					} else {
 						details.push(`  skipped: ${t.skippedReason || "–"}`);
 					}
-					return [taskSeparator, title, info, ...details].join("\n");
+					return [title, info, ...details].join("\n");
 				})
-				.join("\n");
+				.join("\n\n");
 
 			const toolLines = Object.entries(toolCounts)
 				.filter(([name]) => name !== "workflow")

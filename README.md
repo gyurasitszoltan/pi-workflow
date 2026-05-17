@@ -153,6 +153,91 @@ This means the task list survives `/fork`, `/clone`, and session switches withou
 
 ---
 
+## Configuration
+
+An optional user-level config file at `~/.pi/workflow.json` customises extension behaviour. If the file is absent or unparseable, all settings fall back to their defaults silently.
+
+### File location
+
+```
+~/.pi/workflow.json
+```
+
+### Full schema with defaults
+
+```json
+{
+  "$schema": "https://earendil.works/schemas/pi-workflow-config.json",
+
+  "excludedModels": [],
+  "exemptTools": [],
+  "exemptPrefixes": ["ctx_"],
+
+  "taskDefaults": {
+    "requiredFields": ["text"],
+    "importance": "normal"
+  },
+
+  "allowSkip": true
+}
+```
+
+### Fields
+
+#### `excludedModels` · `string[]` · default: `[]`
+
+Model IDs for which the gate is **disabled**. If the current model matches any entry, all tool calls pass through unconditionally. Useful for fast/automated models that don't need task discipline.
+
+```json
+"excludedModels": ["claude-haiku-3-5", "gpt-4o-mini"]
+```
+
+#### `exemptTools` · `string[]` · default: `[]`
+
+Tool names that bypass the gate regardless of task state. `workflow` is always exempt (hardcoded). Only add truly side-effect-free tools here.
+
+```json
+"exemptTools": ["read_file", "browser_screenshot", "web_search"]
+```
+
+#### `exemptPrefixes` · `string[]` · default: `["ctx_"]`
+
+Any tool whose name starts with one of these prefixes bypasses the gate. The default `"ctx_"` covers internal context tools. Can be extended or emptied as needed.
+
+```json
+"exemptPrefixes": ["ctx_", "debug_"]
+```
+
+#### `taskDefaults.requiredFields` · `string[]` · default: `["text"]`
+
+Fields that must be provided when calling `workflow add`. Valid values: `"text"` (always required), `"importance"`, `"acceptance"`.
+
+```json
+"taskDefaults": { "requiredFields": ["text", "importance", "acceptance"] }
+```
+
+#### `taskDefaults.importance` · `"low" | "normal" | "high" | "critical"` · default: `"normal"`
+
+Fallback importance level when `add` is called without an explicit `importance` parameter.
+
+```json
+"taskDefaults": { "importance": "high" }
+```
+
+#### `allowSkip` · `boolean` · default: `true`
+
+When `false`, the `skip` action is blocked and returns an error. Every task must be formally completed with `done`.
+
+```json
+"allowSkip": false
+```
+
+### Loading behaviour
+
+The config is loaded once per session during the `session_start` handler, before state reconstruction. Partial configs are deep-merged with the defaults — unspecified fields always keep their default values.
+
+---
+
 ## Architecture
 
 ```

@@ -453,17 +453,8 @@ export default function (pi: ExtensionAPI) {
 						"",
 					);
 
-					// Task detail rows: inprogress first, then blocked, then recent done
-					const inprogressTasks = tasks.filter((t) => t.status === "inprogress");
-					const blockedTasks = tasks.filter((t) => t.status === "blocked");
-					const recentDone = tasks
-						.filter((t) => t.status === "done")
-						.reverse()
-						.slice(0, 2);
-					const visible = [...inprogressTasks, ...blockedTasks, ...recentDone].slice(0, 5);
-					const remaining = tot - visible.length;
-
-					const rows = visible.map((t) => {
+					// Task detail rows: all tasks in order
+					const rows = tasks.map((t) => {
 						const icon =
 							t.status === "done"
 								? theme.fg("success", STATUS_ICON.done)
@@ -502,10 +493,6 @@ export default function (pi: ExtensionAPI) {
 						}
 						return truncateToWidth(row, width, "");
 					});
-
-					if (remaining > 0) {
-						rows.push(truncateToWidth(theme.fg("dim", `  +${remaining} more`), width, ""));
-					}
 
 					const separatorLine = truncateToWidth(theme.fg("borderMuted", ` ${"─".repeat(Math.max(0, width - 1))}`), width, "");
 

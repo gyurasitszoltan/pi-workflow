@@ -13,11 +13,59 @@
  * UI surfaces: status line, current-task widget, footer, /workflow overlay.
  */
 
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+
+// ── Config ────────────────────────────────────────────────────────────────────
+
+type WorkflowConfig = {
+	excludedModels: string[];
+	exemptTools: string[];
+	exemptPrefixes: string[];
+	taskDefaults: {
+		requiredFields: ("text" | "importance" | "acceptance")[];
+		importance: "low" | "normal" | "high" | "critical";
+	};
+	allowSkip: boolean;
+};
+
+const DEFAULT_CONFIG: WorkflowConfig = {
+	excludedModels: [],
+	exemptTools: [],
+	exemptPrefixes: ["ctx_"],
+	taskDefaults: {
+		requiredFields: ["text"],
+		importance: "normal",
+	},
+	allowSkip: true,
+};
+
+async function loadWorkflowConfig(): Promise<WorkflowConfig> {
+	const configPath = path.join(os.homedir(), ".pi", "workflow.json");
+	try {
+		const raw = await fs.readFile(configPath, "utf-8");
+		const parsed = JSON.parse(raw) as Partial<WorkflowConfig>;
+		return {
+			excludedModels: parsed.excludedModels ?? DEFAULT_CONFIG.excludedModels,
+			exemptTools: parsed.exemptTools ?? DEFAULT_CONFIG.exemptTools,
+			exemptPrefixes: parsed.exemptPrefixes ?? DEFAULT_CONFIG.exemptPrefixes,
+			taskDefaults: {
+				requiredFields: parsed.taskDefaults?.requiredFields ?? DEFAULT_CONFIG.taskDefaults.requiredFields,
+				importance: parsed.taskDefaults?.importance ?? DEFAULT_CONFIG.taskDefaults.importance,
+			},
+			allowSkip: parsed.allowSkip ?? DEFAULT_CONFIG.allowSkip,
+		};
+	} catch {
+		// File missing or parse error → silent fallback to defaults
+		return { ...DEFAULT_CONFIG, taskDefaults: { ...DEFAULT_CONFIG.taskDefaults } };
+	}
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -309,6 +357,7 @@ class WorkflowListComponent {
 export default function (pi: ExtensionAPI) {
 	// ── State ────────────────────────────────────────────────────────────────
 
+	let config: WorkflowConfig = { ...DEFAULT_CONFIG, taskDefaults: { ...DEFAULT_CONFIG.taskDefaults } };
 	let tasks: WorkflowTask[] = [];
 	let nextId = 1;
 	let listTitle: string | undefined;
@@ -520,6 +569,7 @@ export default function (pi: ExtensionAPI) {
 	// ── Event handlers ────────────────────────────────────────────────────────
 
 	pi.on("session_start", async (_event, ctx) => {
+		config = await loadWorkflowConfig();
 		reconstructState(ctx);
 	});
 
@@ -543,8 +593,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_execution_end", async (event, ctx) => {
 		const toolName = event.toolName;
 
-		// Ignore ctx_ prefixed tools entirely
-		if (toolName.startsWith("ctx_")) return;
+		// Ignore exempt-prefix tools entirely (no stats tracking)
+		if (config.exemptPrefixes.some((prefix) => toolName.startsWith(prefix))) return;
 
 		// Global tool count
 		toolCounts[toolName] = (toolCounts[toolName] || 0) + 1;
@@ -584,14 +634,20 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Blocking gate ──────────────────────────────────────────────────────────
 
-	pi.on("tool_call", async (event, _ctx) => {
+	pi.on("tool_call", async (event, ctx) => {
 		const toolName = event.toolName;
 
-		// Never block the workflow tool itself
+		// Never block the workflow tool itself (hardcoded — always exempt)
 		if (toolName === "workflow") return { block: false };
 
-		// Never block ctx_ prefixed tools
-		if (toolName.startsWith("ctx_")) return { block: false };
+		// Model-level exclusion
+		if (config.excludedModels.includes(ctx.model?.id ?? "")) return { block: false };
+
+		// Exempt prefixes (configurable, default: ctx_)
+		if (config.exemptPrefixes.some((prefix) => toolName.startsWith(prefix))) return { block: false };
+
+		// Exempt tools (configurable)
+		if (config.exemptTools.includes(toolName)) return { block: false };
 
 		// No list created
 		if (!listTitle) {
@@ -883,8 +939,23 @@ export default function (pi: ExtensionAPI) {
 						};
 					}
 
+					// Config-driven required fields validation
+					const rf = config.taskDefaults.requiredFields;
+					if (rf.includes("importance") && !params.importance) {
+						return {
+							content: [{ type: "text" as const, text: "Error: importance is required (configured in workflow config)" }],
+							details: makeDetails("add", "importance required by config"),
+						};
+					}
+					if (rf.includes("acceptance") && (!params.acceptance || params.acceptance.length === 0)) {
+						return {
+							content: [{ type: "text" as const, text: "Error: acceptance criteria required (configured in workflow config)" }],
+							details: makeDetails("add", "acceptance required by config"),
+						};
+					}
+
 					const acceptance = params.acceptance?.map((s) => s.trim()).filter(Boolean);
-					const importance: WorkflowTaskImportance = params.importance || "normal";
+					const importance: WorkflowTaskImportance = params.importance ?? config.taskDefaults.importance;
 					const added: WorkflowTask[] = [];
 
 					for (const item of items) {
@@ -1166,6 +1237,12 @@ export default function (pi: ExtensionAPI) {
 
 				// ── skip ──────────────────────────────────────────────────────────
 				case "skip": {
+					if (!config.allowSkip) {
+						return {
+							content: [{ type: "text" as const, text: "Error: skip is disabled by workflow config (allowSkip: false)." }],
+							details: makeDetails("skip", "skip disabled by config"),
+						};
+					}
 					if (params.id === undefined) {
 						return {
 							content: [{ type: "text" as const, text: "Error: id required for skip" }],

@@ -121,14 +121,22 @@ The extension renders three persistent UI surfaces:
 ```
 ✅ Workflow complete: <list title>
 
-Tasks:
-  ✓ #1 Implement feature — 12m 34s — note: shipped in v2.3
-  ↷ #2 Write docs — skipped: deferred
+-------------------------------
+  ✓ #1 Implement feature
+  time: 12m 34s in: 1.2k out: 345
+  note: shipped in v2.3
+-------------------------------
+  ↷ #2 Write docs
+  time: 0m 42s in: 123 out: 45
+  skipped: deferred
 
 Tools used:
   - Read: 14
   - Edit: 8
   - Bash: 3
+
+Total time: 13m 16s
+Total tokens: in: 1.3k out: 390
 ```
 
 ---

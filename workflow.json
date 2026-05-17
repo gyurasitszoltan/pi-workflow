@@ -1,0 +1,16 @@
+{
+  "$schema": "https://earendil.works/schemas/pi-workflow-config.json",
+
+  "excludedModels": [],
+
+  "exemptTools": [],
+
+  "exemptPrefixes": ["ctx_"],
+
+  "taskDefaults": {
+    "requiredFields": ["text"],
+    "importance": "normal"
+  },
+
+  "allowSkip": true
+}

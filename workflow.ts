@@ -874,8 +874,11 @@ export default function (pi: ExtensionAPI) {
 					const descLine = listDescription ? `\n${listDescription}` : "";
 
 					if (tasks.length === 0) {
+						const noListMsg = !listTitle
+							? `No Workflow list defined.\n\nUse \`workflow new-list\` to create a list, then \`workflow add\` to add tasks before using any other tools.`
+							: `No tasks defined yet.\n\nUse \`workflow new-list\` to create a list, then \`workflow add\` to add tasks before using any other tools.`;
 						return {
-							content: [{ type: "text" as const, text: `${header}${descLine}\n\nNo tasks defined yet.` }],
+							content: [{ type: "text" as const, text: `${header}${descLine}\n\n${noListMsg}` }],
 							details: makeDetails("list"),
 						};
 					}
@@ -1016,15 +1019,13 @@ export default function (pi: ExtensionAPI) {
 						};
 					}
 
-					// Auto-pause any other inprogress task
-					const autoPaused: WorkflowTask[] = [];
-					for (const t of tasks) {
-						if (t.id !== startTask.id && t.status === "inprogress") {
-							flushElapsed(t);
-							t.status = "idle";
-							t.updatedAt = now;
-							autoPaused.push(t);
-						}
+					// Block start if another task is already in progress
+					const inProgressTask = tasks.find((t) => t.id !== startTask.id && t.status === "inprogress");
+					if (inProgressTask) {
+						return {
+							content: [{ type: "text" as const, text: `🚫 Cannot start #${startTask.id}: Task #${inProgressTask.id} ("${inProgressTask.text}") is still in progress.\nFinish it first with \`workflow done #${inProgressTask.id}\` (or \`workflow pause #${inProgressTask.id}\` to pause it).` }],
+							details: makeDetails("start", `#${inProgressTask.id} is still in progress`),
+						};
 					}
 
 					startTask.status = "inprogress";
@@ -1032,10 +1033,7 @@ export default function (pi: ExtensionAPI) {
 					startTask.updatedAt = now;
 					bumpVersion();
 
-					let msg = `Started #${startTask.id}: ${startTask.text}`;
-					if (autoPaused.length > 0) {
-						msg += `\n(Auto-paused ${autoPaused.map((t) => `#${t.id}`).join(", ")} → idle.)`;
-					}
+					const msg = `Started #${startTask.id}: ${startTask.text}`;
 
 					const result = {
 						content: [{ type: "text" as const, text: msg }],
@@ -1502,7 +1500,8 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				case "list": {
-					if (taskList.length === 0) return new Text(theme.fg("dim", "No tasks"), 0, 0);
+					if (taskList.length === 0) 
+						return new Text(theme.fg("dim", `No tasks defined yet.\n\nUse \`workflow new-list\` to create a list, then \`workflow add\` to add tasks before using any other tools.`), 0, 0);
 
 					let listText = snap.listTitle ? theme.fg("accent", snap.listTitle) + theme.fg("dim", "  ") : "";
 					listText += theme.fg("dim", formatWorkflowProgress(taskList));
